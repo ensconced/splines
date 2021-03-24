@@ -1,31 +1,77 @@
-const shape = {
-  points: [
-    {
-      x: 100,
-      y: 100,
-    },
-    {
-      x: 200,
-      y: 200,
-    },
-    {
-      x: 600,
-      y: 300,
-    },
-    {
-      x: 764.8,
-      y: 800,
-    },
-    {
-      x: 864.8,
-      y: 800,
-    },
-    {
-      x: 964,
-      y: 400,
-    },
-  ],
-};
+const shape = [
+  {
+    x: 150,
+    y: 100,
+  },
+  {
+    x: 300,
+    y: 150,
+  },
+  {
+    x: 400,
+    y: 250,
+  },
+  {
+    x: 500,
+    y: 350,
+  },
+  {
+    x: 650,
+    y: 400,
+  },
+  {
+    x: 600,
+    y: 250,
+  },
+  {
+    x: 500,
+    y: 150,
+  },
+  {
+    x: 300,
+    y: 150,
+  },
+  {
+    x: 200,
+    y: 250,
+  },
+  {
+    x: 150,
+    y: 400,
+  },
+  {
+    x: 300,
+    y: 350,
+  },
+  {
+    x: 400,
+    y: 250,
+  },
+  {
+    x: 500,
+    y: 150,
+  },
+  {
+    x: 650,
+    y: 100,
+  },
+  {
+    x: 600,
+    y: 250,
+  },
+  {
+    x: 500,
+    y: 350,
+  },
+  {
+    x: 300,
+    y: 350,
+  },
+  {
+    x: 200,
+    y: 250,
+  },
+].map((point) => ({ x: point.x * 2, y: point.y * 2 }));
 
 const numSegments = 128;
 let buffers;
@@ -97,23 +143,23 @@ function getCircle(i: number) {
   // The perpendicular bisectors of two chords of a circle meet at the centre.
   // j, i and k are three points defining a circle.
   // our chords will be j-i and i-k
-  var j = (i - 1 + shape.points.length) % shape.points.length;
-  var k = (i + 1) % shape.points.length;
-  var vec1 = vsub(shape.points[i], shape.points[j]);
-  var mid1 = vadd(shape.points[j], vdiv(vec1, 2));
+  var j = (i - 1 + shape.length) % shape.length;
+  var k = (i + 1) % shape.length;
+  var vec1 = vsub(shape[i], shape[j]);
+  var mid1 = vadd(shape[j], vdiv(vec1, 2));
   var dir1 = rotate90(vec1);
-  var vec2 = vsub(shape.points[k], shape.points[i]);
-  var mid2 = vadd(shape.points[i], vdiv(vec2, 2));
+  var vec2 = vsub(shape[k], shape[i]);
+  var mid2 = vadd(shape[i], vdiv(vec2, 2));
   var dir2 = rotate90(vec2);
   var det = determinant(dir1, dir2);
   if (Math.abs(det) < 0.001) {
-    if (vec1.x * vec2.x + vec1.y * vec2.y >= 0 || shape.points.length <= 2) {
+    if (vec1.x * vec2.x + vec1.y * vec2.y >= 0 || shape.length <= 2) {
       const smallAngle = 0.01;
       const s = Math.sin(smallAngle);
       const l1 = Math.sqrt(vec1.x * vec1.x + vec1.y * vec1.y);
       const l2 = Math.sqrt(vec2.x * vec2.x + vec2.y * vec2.y);
       return {
-        center: shape.points[i],
+        center: shape[i],
         axis1: { x: 0, y: 0 },
         axis2: vdiv(vec2, s),
         limits: [(-smallAngle * l1) / l2, 0, smallAngle],
@@ -125,11 +171,11 @@ function getCircle(i: number) {
   }
   var s = (dir2.y * (mid2.x - mid1.x) + dir2.x * (mid1.y - mid2.y)) / det;
   var center = vadd(mid1, vmult(s, dir1));
-  var axis1 = vsub(shape.points[i], center);
+  var axis1 = vsub(shape[i], center);
   var axis2 = { x: -axis1.y, y: axis1.x };
-  var toPt2 = vsub(shape.points[k], center);
+  var toPt2 = vsub(shape[k], center);
   var limit2 = Math.atan2(vdot(axis2, toPt2), vdot(axis1, toPt2));
-  var toPt1 = vsub(shape.points[j], center);
+  var toPt1 = vsub(shape[j], center);
   var limit1 = Math.atan2(vdot(axis2, toPt1), vdot(axis1, toPt1));
   if (limit1 * limit2 > 0) {
     if (Math.abs(limit1) < Math.abs(limit2))
@@ -148,16 +194,16 @@ function getCircle(i: number) {
 
 function getEllipse(index: number) {
   const numIter = 16;
-  var j = (index - 1 + shape.points.length) % shape.points.length;
-  var k = (index + 1) % shape.points.length;
-  var vec1 = vsub(shape.points[j], shape.points[index]);
-  var vec2 = vsub(shape.points[k], shape.points[index]);
+  var j = (index - 1 + shape.length) % shape.length;
+  var k = (index + 1) % shape.length;
+  var vec1 = vsub(shape[j], shape[index]);
+  var vec2 = vsub(shape[k], shape[index]);
 
-  if (shape.points.length <= 2) {
+  if (shape.length <= 2) {
     const smallAngle = 0.01;
     const s = Math.sin(smallAngle);
     return {
-      center: shape.points[index],
+      center: shape[index],
       axis1: { x: 0, y: 0 },
       axis2: vdiv(vec2, s),
       limits: [-smallAngle, 0, smallAngle],
@@ -193,11 +239,11 @@ function getEllipse(index: number) {
   if (len1 < len2) {
     vec = vec2;
     len = len2;
-    pt2 = shape.points[k];
+    pt2 = shape[k];
   } else {
     vec = vec1;
     len = len1;
-    pt2 = shape.points[j];
+    pt2 = shape[j];
   }
   var dir = vdiv(vec, len);
   var perp = { x: -dir.y, y: dir.x };
@@ -207,7 +253,7 @@ function getEllipse(index: number) {
   var v = (b * b) / len;
   var h = (b * a) / len;
   var axis1 = vsub(vmult(-v, dir), vmult(h, perp));
-  var center = vsub(shape.points[index], axis1);
+  var center = vsub(shape[index], axis1);
   var axis2 = vsub(pt2, center);
   var beta = Math.asin(Math.min(c / a, 1));
   return {
@@ -236,14 +282,14 @@ function getInterpolationCurve(index: number) {
 
 function drawCircleCurves() {
   ctx.beginPath();
-  if (shape.points.length < 2) return;
+  if (shape.length < 2) return;
   const c1 = getInterpolationCurve(0);
   limits1 = [c1.limits[1], c1.limits[2]];
   center1 = [c1.center.x, c1.center.y];
   axes1 = [c1.axis1.x, c1.axis1.y, c1.axis2.x, c1.axis2.y];
   const curveStart = 1;
 
-  for (var i = curveStart; i < shape.points.length; i++) {
+  for (var i = curveStart; i < shape.length; i++) {
     var c2 = getInterpolationCurve(i);
     limits2 = [c2.limits[0], c2.limits[1]];
     center2 = [c2.center.x, c2.center.y];
@@ -256,7 +302,7 @@ function drawCircleCurves() {
     axes1 = [c2.axis1.x, c2.axis1.y, c2.axis2.x, c2.axis2.y];
   }
   {
-    const c2 = getInterpolationCurve(shape.points.length - 1);
+    const c2 = getInterpolationCurve(shape.length - 1);
     limits2 = [c2.limits[0], c2.limits[1]];
     center2 = [c2.center.x, c2.center.y];
     axes2 = [c2.axis1.x, c2.axis1.y, c2.axis2.x, c2.axis2.y];
@@ -273,6 +319,7 @@ function drawCircleCurves() {
       }
     }
   }
+  ctx.lineWidth = 2;
   ctx.stroke();
 }
 
@@ -341,7 +388,7 @@ function draw(
 }
 
 function drawPoints() {
-  shape.points.forEach((point) => {
+  shape.forEach((point) => {
     ctx.beginPath();
     ctx.arc(point.x, point.y, 5, 0, 2 * Math.PI);
     ctx.fill();

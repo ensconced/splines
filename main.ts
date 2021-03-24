@@ -1,9 +1,3 @@
-enum ShowEnds {
-  hideEnds,
-  showEnds,
-  joinEnds,
-}
-
 const shape = {
   points: [
     {
@@ -31,55 +25,34 @@ const shape = {
       y: 400,
     },
   ],
-  showEnds: ShowEnds.joinEnds,
-} as const;
+};
 
-const numSegments = 20;
+const numSegments = 128;
 let buffers;
 
 var circleProgramInfo;
+var uniformLocations;
 
-let gl;
+let canvas: HTMLCanvasElement;
+let ctx: CanvasRenderingContext2D;
 var curveEdit = 0;
-
+let canvasSize: Vector;
 var showColors = true;
 const black = { r: 0, g: 0, b: 0 };
+let firstLine = true;
+let limits1, center1, axes1, limits2, center2, axes2;
 
 function main() {
-  // set up canvas and context
-  const canvas = document.querySelector("#glCanvas") as HTMLCanvasElement;
-  gl = canvas.getContext("webgl", { antialias: false, depth: false });
-  if (!gl) throw new Error("failed to create webgl context");
-  gl.clearColor(1.0, 1.0, 1.0, 0.0);
-  gl.lineWidth(1.0);
-
-  const circleProgram = initShaderProgram(vertexShaderCircle, fragmentShader);
-  circleProgramInfo = {
-    program: circleProgram,
-    attribLocations: {
-      t: gl.getAttribLocation(circleProgram, "t"),
-    },
-    uniformLocations: {
-      limits1: gl.getUniformLocation(circleProgram, "curve1.limits"),
-      center1: gl.getUniformLocation(circleProgram, "curve1.center"),
-      axes1: gl.getUniformLocation(circleProgram, "curve1.axes"),
-      limits2: gl.getUniformLocation(circleProgram, "curve2.limits"),
-      center2: gl.getUniformLocation(circleProgram, "curve2.center"),
-      axes2: gl.getUniformLocation(circleProgram, "curve2.axes"),
-      color: gl.getUniformLocation(circleProgram, "color"),
-      color1: gl.getUniformLocation(circleProgram, "color1"),
-      color2: gl.getUniformLocation(circleProgram, "color2"),
-      size: gl.getUniformLocation(circleProgram, "canvasSize"),
-    },
-  };
-
+  canvas = document.querySelector("#glCanvas") as HTMLCanvasElement;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("failed to create canvas context");
+  ctx = context;
   updateCanvasSize();
-  initBuffers();
-  drawScene();
+  drawCircleCurves();
+  drawPoints();
 }
 
 function updateCanvasSize() {
-  const canvas = document.querySelector("#glCanvas");
   canvas.style.width = "100%";
   canvas.style.height = "100%";
   const pixelRatio = window.devicePixelRatio || 1;
@@ -89,84 +62,50 @@ function updateCanvasSize() {
   const height = canvas.height / devicePixelRatio;
   canvas.style.width = width + "px";
   canvas.style.height = height + "px";
-  gl.viewport(0, 0, canvas.width, canvas.height);
-
-  const progs = [circleProgramInfo];
-
-  progs.forEach(function (p) {
-    gl.useProgram(p.program);
-    gl.uniform2f(p.uniformLocations.size, width, height);
-  });
+  canvasSize = [width, height];
 }
 
-function initShaderProgram(vsSource, fsSource) {
-  const vertexShader = loadShader(gl.VERTEX_SHADER, vsSource);
-  const fragmentShader = loadShader(gl.FRAGMENT_SHADER, fsSource);
-
-  const shaderProgram = gl.createProgram();
-  gl.attachShader(shaderProgram, vertexShader);
-  gl.attachShader(shaderProgram, fragmentShader);
-  gl.linkProgram(shaderProgram);
-
-  if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
-    alert(
-      "Unable to initialize the shader program: " +
-        gl.getProgramInfoLog(shaderProgram)
-    );
-    return null;
-  }
-  return shaderProgram;
+interface Point {
+  x: number;
+  y: number;
 }
 
-function loadShader(type, source) {
-  const shader = gl.createShader(type);
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-  return shader;
-}
-
-function initBuffers() {
-  var segpos = [];
-  for (var i = 0; i <= numSegments; i++) {
-    segpos[i] = i / numSegments;
-  }
-  const segposBuffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, segposBuffer);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(segpos), gl.STATIC_DRAW);
-  buffers = {
-    segpos: segposBuffer,
-  };
-}
-
-function vadd(v0, v1) {
+function vadd(v0: Point, v1: Point): Point {
   return { x: v0.x + v1.x, y: v0.y + v1.y };
 }
-function vsub(v0, v1) {
+function vsub(v0: Point, v1: Point): Point {
   return { x: v0.x - v1.x, y: v0.y - v1.y };
 }
-function vmult(f, v) {
+function vmult(f: number, v: Point): Point {
   return { x: f * v.x, y: f * v.y };
 }
-function vdiv(v, f) {
+function vdiv(v: Point, f: number): Point {
   return { x: v.x / f, y: v.y / f };
 }
-function vdot(v0, v1) {
+function vdot(v0: Point, v1: Point): number {
   return v0.x * v1.x + v0.y * v1.y;
 }
-function vcross(v0, v1) {
+function determinant(v0: Point, v1: Point): number {
   return v0.x * v1.y - v0.y * v1.x;
 }
 
-function getCircle(index: number) {
-  var j = (index - 1 + shape.points.length) % shape.points.length;
-  var k = (index + 1) % shape.points.length;
-  var vec1 = vsub(shape.points[index], shape.points[j]);
+function rotate90(vec: Point): Point {
+  return { x: -vec.y, y: vec.x };
+}
+
+function getCircle(i: number) {
+  // The perpendicular bisectors of two chords of a circle meet at the centre.
+  // j, i and k are three points defining a circle.
+  // our chords will be j-i and i-k
+  var j = (i - 1 + shape.points.length) % shape.points.length;
+  var k = (i + 1) % shape.points.length;
+  var vec1 = vsub(shape.points[i], shape.points[j]);
   var mid1 = vadd(shape.points[j], vdiv(vec1, 2));
-  var dir1 = { x: -vec1.y, y: vec1.x };
-  var vec2 = vsub(shape.points[k], shape.points[index]);
-  var mid2 = vadd(shape.points[index], vdiv(vec2, 2));
-  var dir2 = { x: -vec2.y, y: vec2.x };
-  var det = vcross(dir1, dir2);
+  var dir1 = rotate90(vec1);
+  var vec2 = vsub(shape.points[k], shape.points[i]);
+  var mid2 = vadd(shape.points[i], vdiv(vec2, 2));
+  var dir2 = rotate90(vec2);
+  var det = determinant(dir1, dir2);
   if (Math.abs(det) < 0.001) {
     if (vec1.x * vec2.x + vec1.y * vec2.y >= 0 || shape.points.length <= 2) {
       const smallAngle = 0.01;
@@ -174,7 +113,7 @@ function getCircle(index: number) {
       const l1 = Math.sqrt(vec1.x * vec1.x + vec1.y * vec1.y);
       const l2 = Math.sqrt(vec2.x * vec2.x + vec2.y * vec2.y);
       return {
-        center: shape.points[index],
+        center: shape.points[i],
         axis1: { x: 0, y: 0 },
         axis2: vdiv(vec2, s),
         limits: [(-smallAngle * l1) / l2, 0, smallAngle],
@@ -186,7 +125,7 @@ function getCircle(index: number) {
   }
   var s = (dir2.y * (mid2.x - mid1.x) + dir2.x * (mid1.y - mid2.y)) / det;
   var center = vadd(mid1, vmult(s, dir1));
-  var axis1 = vsub(shape.points[index], center);
+  var axis1 = vsub(shape.points[i], center);
   var axis2 = { x: -axis1.y, y: axis1.x };
   var toPt2 = vsub(shape.points[k], center);
   var limit2 = Math.atan2(vdot(axis2, toPt2), vdot(axis1, toPt2));
@@ -200,8 +139,8 @@ function getCircle(index: number) {
   }
   return {
     center: center,
-    axis1: axis1,
-    axis2: axis2,
+    axis1,
+    axis2,
     limits: [limit1, 0, limit2],
     color: showColors ? { r: 1, g: 0, b: 0 } : black,
   };
@@ -262,7 +201,7 @@ function getEllipse(index: number) {
   }
   var dir = vdiv(vec, len);
   var perp = { x: -dir.y, y: dir.x };
-  var cross = vcross(vec1, vec2);
+  var cross = determinant(vec1, vec2);
   if ((len1 < len2 && cross > 0) || (len1 >= len2 && cross < 0))
     perp = { x: dir.y, y: -dir.x };
   var v = (b * b) / len;
@@ -295,278 +234,119 @@ function getInterpolationCurve(index: number) {
   return c;
 }
 
-async function drawCircleCurves(prg) {
+function drawCircleCurves() {
+  ctx.beginPath();
   if (shape.points.length < 2) return;
-  var c1 = getInterpolationCurve(shape.showEnds == ShowEnds.joinEnds ? 0 : 1);
-  gl.uniform2f(
-    circleProgramInfo.uniformLocations.limits1,
-    c1.limits[shape.showEnds == 1 ? 0 : 1],
-    c1.limits[shape.showEnds == 1 ? 1 : 2]
-  );
-  gl.uniform2f(
-    circleProgramInfo.uniformLocations.center1,
-    c1.center.x,
-    c1.center.y
-  );
-  gl.uniform4f(
-    circleProgramInfo.uniformLocations.axes1,
-    c1.axis1.x,
-    c1.axis1.y,
-    c1.axis2.x,
-    c1.axis2.y
-  );
-  if (circleProgramInfo.uniformLocations.color1)
-    gl.uniform3f(
-      circleProgramInfo.uniformLocations.color1,
-      c1.color.r,
-      c1.color.g,
-      c1.color.b
-    );
-  if (shape.points.length <= 2 && shape.showEnds != ShowEnds.hideEnds) {
-    gl.uniform2f(
-      circleProgramInfo.uniformLocations.limits1,
-      c1.limits[1],
-      c1.limits[2]
-    );
-    gl.uniform2f(
-      circleProgramInfo.uniformLocations.limits2,
-      c1.limits[1],
-      c1.limits[2]
-    );
-    gl.uniform2f(
-      circleProgramInfo.uniformLocations.center2,
-      c1.center.x,
-      c1.center.y
-    );
-    gl.uniform4f(
-      circleProgramInfo.uniformLocations.axes2,
-      c1.axis1.x,
-      c1.axis1.y,
-      c1.axis2.x,
-      c1.axis2.y
-    );
-    if (circleProgramInfo.uniformLocations.color2)
-      gl.uniform3f(
-        circleProgramInfo.uniformLocations.color2,
-        c1.color.r,
-        c1.color.g,
-        c1.color.b
-      );
-    gl.drawArrays(gl.LINE_STRIP, 0, prg.numVerts);
-    return;
-  }
-  const curveStart = shape.showEnds == ShowEnds.hideEnds ? 2 : 1;
+  const c1 = getInterpolationCurve(0);
+  limits1 = [c1.limits[1], c1.limits[2]];
+  center1 = [c1.center.x, c1.center.y];
+  axes1 = [c1.axis1.x, c1.axis1.y, c1.axis2.x, c1.axis2.y];
+  const curveStart = 1;
 
-  for (var i = curveStart; i < shape.points.length - 1; i++) {
-    var c2 = getInterpolationCurve(i, shape);
-    gl.uniform2f(
-      circleProgramInfo.uniformLocations.limits2,
-      c2.limits[0],
-      c2.limits[1]
-    );
-    gl.uniform2f(
-      circleProgramInfo.uniformLocations.center2,
-      c2.center.x,
-      c2.center.y
-    );
-    gl.uniform4f(
-      circleProgramInfo.uniformLocations.axes2,
-      c2.axis1.x,
-      c2.axis1.y,
-      c2.axis2.x,
-      c2.axis2.y
-    );
-    if (circleProgramInfo.uniformLocations.color2)
-      gl.uniform3f(
-        circleProgramInfo.uniformLocations.color2,
-        c2.color.r,
-        c2.color.g,
-        c2.color.b
-      );
-
-    gl.drawArrays(gl.LINE_STRIP, 0, prg.numVerts);
-    gl.uniform2f(
-      circleProgramInfo.uniformLocations.limits1,
-      c2.limits[1],
-      c2.limits[2]
-    );
-    gl.uniform2f(
-      circleProgramInfo.uniformLocations.center1,
-      c2.center.x,
-      c2.center.y
-    );
-    gl.uniform4f(
-      circleProgramInfo.uniformLocations.axes1,
-      c2.axis1.x,
-      c2.axis1.y,
-      c2.axis2.x,
-      c2.axis2.y
-    );
-    if (circleProgramInfo.uniformLocations.color1)
-      gl.uniform3f(
-        circleProgramInfo.uniformLocations.color1,
-        c2.color.r,
-        c2.color.g,
-        c2.color.b
-      );
+  for (var i = curveStart; i < shape.points.length; i++) {
+    var c2 = getInterpolationCurve(i);
+    limits2 = [c2.limits[0], c2.limits[1]];
+    center2 = [c2.center.x, c2.center.y];
+    axes2 = [c2.axis1.x, c2.axis1.y, c2.axis2.x, c2.axis2.y];
+    for (let i = 0; i <= numSegments; i++) {
+      draw(i / numSegments, limits1, center1, axes1, limits2, center2, axes2);
+    }
+    limits1 = [c2.limits[1], c2.limits[2]];
+    center1 = [c2.center.x, c2.center.y];
+    axes1 = [c2.axis1.x, c2.axis1.y, c2.axis2.x, c2.axis2.y];
   }
-  if (shape.showEnds != ShowEnds.hideEnds) {
-    var c2 = getInterpolationCurve(
-      shape.points.length - (shape.showEnds == ShowEnds.joinEnds ? 1 : 2),
-      shape
-    );
-    gl.uniform2f(
-      circleProgramInfo.uniformLocations.limits2,
-      c2.limits[2 - shape.showEnds],
-      c2.limits[3 - shape.showEnds]
-    );
-    gl.uniform2f(
-      circleProgramInfo.uniformLocations.center2,
-      c2.center.x,
-      c2.center.y
-    );
-    gl.uniform4f(
-      circleProgramInfo.uniformLocations.axes2,
-      c2.axis1.x,
-      c2.axis1.y,
-      c2.axis2.x,
-      c2.axis2.y
-    );
-    if (circleProgramInfo.uniformLocations.color2)
-      gl.uniform3f(
-        circleProgramInfo.uniformLocations.color2,
-        c2.color.r,
-        c2.color.g,
-        c2.color.b
-      );
-    gl.drawArrays(gl.LINE_STRIP, 0, prg.numVerts);
-    if (shape.showEnds == ShowEnds.joinEnds) {
-      gl.uniform2f(
-        circleProgramInfo.uniformLocations.limits1,
-        c2.limits[1],
-        c2.limits[2]
-      );
-      gl.uniform2f(
-        circleProgramInfo.uniformLocations.center1,
-        c2.center.x,
-        c2.center.y
-      );
-      gl.uniform4f(
-        circleProgramInfo.uniformLocations.axes1,
-        c2.axis1.x,
-        c2.axis1.y,
-        c2.axis2.x,
-        c2.axis2.y
-      );
-      if (circleProgramInfo.uniformLocations.color1)
-        gl.uniform3f(
-          circleProgramInfo.uniformLocations.color1,
-          c2.color.r,
-          c2.color.g,
-          c2.color.b
-        );
-      var c3 = getInterpolationCurve(0, shape);
-      gl.uniform2f(
-        circleProgramInfo.uniformLocations.limits2,
-        c3.limits[0],
-        c3.limits[1]
-      );
-      gl.uniform2f(
-        circleProgramInfo.uniformLocations.center2,
-        c3.center.x,
-        c3.center.y
-      );
-      gl.uniform4f(
-        circleProgramInfo.uniformLocations.axes2,
-        c3.axis1.x,
-        c3.axis1.y,
-        c3.axis2.x,
-        c3.axis2.y
-      );
-      if (circleProgramInfo.uniformLocations.color2)
-        gl.uniform3f(
-          circleProgramInfo.uniformLocations.color2,
-          c3.color.r,
-          c3.color.g,
-          c3.color.b
-        );
-      gl.drawArrays(gl.LINE_STRIP, 0, prg.numVerts);
+  {
+    const c2 = getInterpolationCurve(shape.points.length - 1);
+    limits2 = [c2.limits[0], c2.limits[1]];
+    center2 = [c2.center.x, c2.center.y];
+    axes2 = [c2.axis1.x, c2.axis1.y, c2.axis2.x, c2.axis2.y];
+    {
+      limits1 = [c2.limits[1], c2.limits[2]] as Vector;
+      center1 = [c2.center.x, c2.center.y] as Vector;
+      axes1 = [c2.axis1.x, c2.axis1.y, c2.axis2.x, c2.axis2.y] as Quad;
+      const c3 = getInterpolationCurve(0);
+      limits2 = [c3.limits[0], c3.limits[1]] as Vector;
+      center2 = [c3.center.x, c3.center.y] as Vector;
+      axes2 = [c3.axis1.x, c3.axis1.y, c3.axis2.x, c3.axis2.y] as Quad;
+      for (let i = 0; i <= numSegments; i++) {
+        draw(i / numSegments, limits1, center1, axes1, limits2, center2, axes2);
+      }
     }
   }
+  ctx.stroke();
 }
 
-function drawScene() {
-  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-  gl.useProgram(circleProgramInfo.program);
-  gl.bindBuffer(gl.ARRAY_BUFFER, buffers.segpos);
-  gl.vertexAttribPointer(
-    circleProgramInfo.attribLocations.t,
-    1,
-    gl.FLOAT,
-    false,
-    0,
-    0
-  );
-  gl.enableVertexAttribArray(circleProgramInfo.attribLocations.t);
-  gl.uniform3f(
-    circleProgramInfo.uniformLocations.color1,
-    0,
-    showColors ? 0.5 : 0,
-    0
-  );
-  gl.uniform3f(
-    circleProgramInfo.uniformLocations.color2,
-    0,
-    showColors ? 0.5 : 0,
-    0
-  );
-  drawCircleCurves(
-    {
-      numVerts: numSegments + 1,
-    },
-    shape
+type Vector = [number, number];
+type Color = [number, number, number];
+type Quad = [number, number, number, number];
+
+function addVectors(v1: Vector, v2: Vector): Vector {
+  return v1.map((x, idx) => x + v2[idx]) as Vector;
+}
+
+function multiplyComponents(v1: Vector, v2: Vector): Vector {
+  return v1.map((x, idx) => x * v2[idx]) as Vector;
+}
+
+function divideComponents(v1: Vector, v2: Vector): Vector {
+  return v1.map((x, idx) => x / v2[idx]) as Vector;
+}
+
+function scaleVector(v: Vector, scalar: number): Vector {
+  return v.map((x) => x * scalar) as Vector;
+}
+
+function curvePos(
+  t: number,
+  limits: Vector,
+  axes: Quad,
+  center: Vector
+): Vector {
+  const tt = limits[0] + t * (limits[1] - limits[0]);
+  return addVectors(
+    center,
+    addVectors(
+      scaleVector(axes.slice(0, 2) as Vector, Math.cos(tt)),
+      scaleVector(axes.slice(2, 4) as Vector, Math.sin(tt))
+    )
   );
 }
 
-const vertexShaderCircle = `
-	struct CurveData {
-		vec2 limits;
-		vec2 center;
-		vec4 axes;
-	};
-	vec2 curvePos( CurveData curve, float t )
-	{
-		float tt = curve.limits.x + t * (curve.limits.y - curve.limits.x);
-		return curve.center + curve.axes.xy * cos(tt) + curve.axes.zw * sin(tt);
-	}
-	attribute float t;
-	uniform CurveData curve1, curve2;
-	uniform vec2 canvasSize;
-	uniform vec3 color1;
-	uniform vec3 color2;
-	varying vec3 clr;
-	void main() {
-		vec2  p1  = curvePos(curve1,t);
-		vec2  p2  = curvePos(curve2,t);
+function draw(
+  t: number,
+  limits1: Vector,
+  center1: Vector,
+  axes1: Quad,
+  limits2: Vector,
+  center2: Vector,
+  axes2: Quad
+) {
+  const p1 = curvePos(t, limits1, axes1, center1);
+  const p2 = curvePos(t, limits2, axes2, center2);
+  const cs = [
+    Math.cos((Math.PI / 2) * t),
+    Math.sin((Math.PI / 2) * t),
+  ] as Vector;
+  const cs2 = multiplyComponents(cs, cs);
+  const p = addVectors(
+    p1.map((x) => x * cs2[0]) as Vector,
+    p2.map((x) => x * cs2[1]) as Vector
+  );
+  if (firstLine) {
+    ctx.moveTo(...p);
+    firstLine = false;
+  } else {
+    ctx.lineTo(...p);
+  }
+}
 
-		const float PI_2 = 1.57079632679489661923;
-		vec2  cs  = vec2( cos(PI_2*t), sin(PI_2*t) );
-		vec2  cs2 = cs*cs;
-		vec2  p   = cs2.x * p1 + cs2.y * p2;
-
-		vec2 cp = p / canvasSize * vec2(2,-2) + vec2(-1,1);
-		gl_Position = vec4(cp,0,1);
-		clr = cs2.x * color1 + cs2.y * color2;
-	}
-`;
-
-const fragmentShader = `
-	precision mediump float;
-	varying vec3 clr;
-	void main() {
-		gl_FragColor = vec4(clr, 1);
-	}
-`;
+function drawPoints() {
+  shape.points.forEach((point) => {
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 5, 0, 2 * Math.PI);
+    ctx.fill();
+  });
+}
 
 document.addEventListener("DOMContentLoaded", () => {
   main();
